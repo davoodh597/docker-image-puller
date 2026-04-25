@@ -57,8 +57,13 @@ jobs:
         if: ${{ startsWith(env.IMAGE_REF_INPUT, 'ghcr.io/') }}
         shell: bash
         run: |
-          echo "${{ github.token }}" | docker login ghcr.io \
-            -u "${{ github.actor }}" --password-stdin
+          if [ "$RUNTIME" = "podman" ]; then
+            echo "${{ github.token }}" | podman login ghcr.io \
+              -u "${{ github.actor }}" --password-stdin
+          else
+            echo "${{ github.token }}" | docker login ghcr.io \
+              -u "${{ github.actor }}" --password-stdin
+          fi
 
       - name: Pull image and save it
         shell: bash
@@ -89,10 +94,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "$ASSET_NAME" --clobber
+          if gh release view "$RELEASE_TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$ASSET_NAME" \
+              --repo "${{ github.repository }}" \
+              --clobber
           else
             gh release create "$RELEASE_TAG" "$ASSET_NAME" \
+              --repo "${{ github.repository }}" \
               --title "$RELEASE_TAG" \
               --notes "Container image archive for $IMAGE_REF"
           fi
