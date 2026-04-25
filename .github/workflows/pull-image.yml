@@ -38,24 +38,27 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y podman gzip
 
-      - name: Normalize image reference (default :latest if missing)
+      - name: Normalize image reference
         shell: bash
         run: |
           set -euo pipefail
 
           IMAGE_REF="$IMAGE_REF_INPUT"
 
-          if [[ "$IMAGE_REF" != *":"* ]]; then
+          # If no explicit tag is present, use :latest.
+          # Keeps registry ports like localhost:5000/repo intact.
+          if [[ "$IMAGE_REF" != *@* ]] && [[ ! "$IMAGE_REF" =~ :[^/]+$ ]]; then
             IMAGE_REF="${IMAGE_REF}:latest"
           fi
 
           echo "IMAGE_REF=$IMAGE_REF" >> "$GITHUB_ENV"
 
-      - name: Login to GHCR (safe for private images)
+      - name: Login to GHCR
+        if: ${{ startsWith(env.IMAGE_REF_INPUT, 'ghcr.io/') }}
         shell: bash
         run: |
           echo "${{ github.token }}" | docker login ghcr.io \
-            -u "${{ github.actor }}" --password-stdin || true
+            -u "${{ github.actor }}" --password-stdin
 
       - name: Pull image and save it
         shell: bash
@@ -76,7 +79,6 @@ jobs:
 
           safe_name="$(echo "$IMAGE_REF" | tr '/:@' '___' | tr -cd 'A-Za-z0-9._-')"
           asset_name="${safe_name}.tar.gz"
-
           mv image.tar.gz "$asset_name"
           echo "ASSET_NAME=$asset_name" >> "$GITHUB_ENV"
 
