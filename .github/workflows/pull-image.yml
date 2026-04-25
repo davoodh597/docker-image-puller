@@ -1,0 +1,75 @@
+name: Pull image and publish release asset
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_ref:
+        description: "Container image reference, e.g. ghcr.io/org/app:1.2.3"
+        required: true
+        type: string
+      release_tag:
+        description: "GitHub release tag, e.g. v1.2.3"
+        required: true
+        type: string
+      runtime:
+        description: "Tool to use for pulling/saving the image"
+        required: true
+        type: choice
+        default: docker
+        options:
+          - docker
+          - podman
+
+jobs:
+  pull-and-upload:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    env:
+      IMAGE_REF: ${{ github.event.inputs.image_ref }}
+      RELEASE_TAG: ${{ github.event.inputs.release_tag }}
+      RUNTIME: ${{ github.event.inputs.runtime }}
+
+    steps:
+      - name: Install Podman
+        if: ${{ env.RUNTIME == 'podman' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman gzip
+
+      - name: Pull image and save it
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "$RUNTIME" = "podman" ]; then
+            podman pull "$IMAGE_REF"
+            podman save -o image.tar "$IMAGE_REF"
+          else
+            docker pull "$IMAGE_REF"
+            docker save -o image.tar "$IMAGE_REF"
+          fi
+
+          gzip -9 image.tar
+
+          safe_name="$(echo "$IMAGE_REF" | tr '/:@' '___' | tr -cd 'A-Za-z0-9._-')"
+          asset_name="${safe_name}.tar.gz"
+          mv image.tar.gz "$asset_name"
+
+          echo "ASSET_NAME=$asset_name" >> "$GITHUB_ENV"
+
+      - name: Create or update GitHub release and upload asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$ASSET_NAME" --clobber
+          else
+            gh release create "$RELEASE_TAG" "$ASSET_NAME" \
+              --title "$RELEASE_TAG" \
+              --notes "Container image archive for $IMAGE_REF"
+          fi
