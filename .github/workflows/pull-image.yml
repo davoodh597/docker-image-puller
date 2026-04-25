@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       image_ref:
-        description: "Container image reference, e.g. ghcr.io/org/app:1.2.3"
+        description: "Container image reference, e.g. ghcr.io/org/app or ghcr.io/org/app:tag"
         required: true
         type: string
       release_tag:
@@ -27,21 +27,42 @@ jobs:
       contents: write
 
     env:
-      IMAGE_REF: ${{ github.event.inputs.image_ref }}
+      IMAGE_REF_INPUT: ${{ github.event.inputs.image_ref }}
       RELEASE_TAG: ${{ github.event.inputs.release_tag }}
       RUNTIME: ${{ github.event.inputs.runtime }}
 
     steps:
-      - name: Install Podman
+      - name: Install Podman (if needed)
         if: ${{ env.RUNTIME == 'podman' }}
         run: |
           sudo apt-get update
           sudo apt-get install -y podman gzip
 
+      - name: Normalize image reference (default :latest if missing)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IMAGE_REF="$IMAGE_REF_INPUT"
+
+          if [[ "$IMAGE_REF" != *":"* ]]; then
+            IMAGE_REF="${IMAGE_REF}:latest"
+          fi
+
+          echo "IMAGE_REF=$IMAGE_REF" >> "$GITHUB_ENV"
+
+      - name: Login to GHCR (safe for private images)
+        shell: bash
+        run: |
+          echo "${{ github.token }}" | docker login ghcr.io \
+            -u "${{ github.actor }}" --password-stdin || true
+
       - name: Pull image and save it
         shell: bash
         run: |
           set -euo pipefail
+
+          echo "Using image: $IMAGE_REF"
 
           if [ "$RUNTIME" = "podman" ]; then
             podman pull "$IMAGE_REF"
@@ -55,8 +76,8 @@ jobs:
 
           safe_name="$(echo "$IMAGE_REF" | tr '/:@' '___' | tr -cd 'A-Za-z0-9._-')"
           asset_name="${safe_name}.tar.gz"
-          mv image.tar.gz "$asset_name"
 
+          mv image.tar.gz "$asset_name"
           echo "ASSET_NAME=$asset_name" >> "$GITHUB_ENV"
 
       - name: Create or update GitHub release and upload asset
